@@ -1,0 +1,90 @@
+From f69a94ee3b268111d8f9601213fce0a13667bf59 Mon Sep 17 00:00:00 2001
+From: Claire <claire.github-309c@sitedethib.com>
+Date: Mon, 27 Jun 2022 19:36:02 +0200
+Subject: [PATCH 3/3] [WiP] setupapi: Add fake Container ID for DualSense
+ devices
+
+---
+ dlls/mmdevapi/devenum.c | 24 ++++++++++++++++++++++++
+ dlls/setupapi/devinst.c | 21 +++++++++++++++++++++
+ 2 files changed, 45 insertions(+)
+
+diff --git a/dlls/mmdevapi/devenum.c b/dlls/mmdevapi/devenum.c
+index f36dcb20b72..c68ec6f78ba 100644
+--- a/dlls/mmdevapi/devenum.c
++++ b/dlls/mmdevapi/devenum.c
+@@ -359,6 +359,11 @@ static MMDevice *MMDevice_Create(WCHAR *name, GUID *id, EDataFlow flow, DWORD st
+             MMDevice_SetPropValue(id, flow, (const PROPERTYKEY*)&DEVPKEY_DeviceInterface_FriendlyName, &pv);
+             MMDevice_SetPropValue(id, flow, (const PROPERTYKEY*)&DEVPKEY_Device_DeviceDesc, &pv);
+ 
++            if (wcscmp(name, L"Wireless Controller") == 0) {
++              pv.pwszVal = L"{12345678-9ABC-DEF0-1234-56789ABCDEF0}";
++              MMDevice_SetPropValue(id, flow, (const PROPERTYKEY*)&DEVPKEY_Device_ContainerId, &pv);
++            }
++
+             pv.pwszVal = guidstr;
+             MMDevice_SetPropValue(id, flow, &deviceinterface_key, &pv);
+ 
+@@ -1450,9 +1455,28 @@ static HRESULT WINAPI MMDevPropStore_GetValue(IPropertyStore *iface, REFPROPERTY
+     }
+ 
+     hres = MMDevice_GetPropValue(&This->parent->devguid, This->parent->flow, key, pv);
++
+     if (FAILED(hres))
+         return hres;
+ 
++    /* Clients apps expect a CLSID */
++    if(IsEqualPropertyKey(*key,DEVPKEY_Device_ContainerId) && pv->vt == VT_LPWSTR && pv->pwszVal) {
++        LPWSTR guidstr = pv->pwszVal;
++
++        pv->puuid = CoTaskMemAlloc(sizeof(*pv->puuid));
++        if (!pv->puuid)
++          return E_OUTOFMEMORY;
++
++        hres = CLSIDFromString(guidstr, pv->puuid);
++        if (FAILED(hres))
++          return hres;
++
++        pv->vt = VT_CLSID;
++        CoTaskMemFree(guidstr);
++
++        return hres;
++    }
++
+     if (WARN_ON(mmdevapi))
+     {
+         if ((IsEqualPropertyKey(*key, DEVPKEY_Device_FriendlyName) ||
+diff --git a/dlls/setupapi/devinst.c b/dlls/setupapi/devinst.c
+index aea0e605f1d..217997e8bb3 100644
+--- a/dlls/setupapi/devinst.c
++++ b/dlls/setupapi/devinst.c
+@@ -3227,6 +3227,27 @@ BOOL WINAPI SetupDiGetDeviceRegistryPropertyW(HDEVINFO devinfo,
+         return FALSE;
+     }
+ 
++    if (Property == 36) {
++        /* Container ID. Returning a fake one so that games using the DualSense can match devices together. */
++        STRING *guid = L"{12345678-9abc-def0-1234-56789abcdef0}";
++        if (PropertyRegDataType != NULL) {
++          *PropertyRegDataType = REG_SZ;
++        }
++
++        DWORD size = (wcslen(guid) + 1) * sizeof(WCHAR);
++
++        if (PropertyBufferSize > size) {
++          wcscpy(PropertyBuffer, guid);
++
++          if (RequiredSize)
++            *RequiredSize = size;
++
++          TRACE("output: %s\n", debugstr_w(PropertyBuffer));
++
++          ret = TRUE;
++        }
++    }
++
+     if (Property < ARRAY_SIZE(PropertyMap) && PropertyMap[Property].nameW)
+     {
+         DWORD size = PropertyBufferSize;
+-- 
+2.35.1

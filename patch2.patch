@@ -1,0 +1,254 @@
+From 77afcbe00e79e0a5cd4cfbe7277fdd22a4265e23 Mon Sep 17 00:00:00 2001
+From: Claire <claire.github-309c@sitedethib.com>
+Date: Sat, 18 Jun 2022 15:10:35 +0200
+Subject: [PATCH 1/3] winepulse: Return device-specific values for GetMixFormat
+ and GetDevicePeriod
+
+When GetMixFormat or GetDevicePeriod are used, return values specific to the
+selected device instead of those of the default one. This is especially useful
+when the audio devices features less channels than one specifically selected
+by the application.
+---
+ dlls/winepulse.drv/mmdevdrv.c | 32 ++++++++++++++-
+ dlls/winepulse.drv/pulse.c    | 75 ++++++++++++++++++++++++++++++-----
+ dlls/winepulse.drv/unixlib.h  | 19 +++++++++
+ 3 files changed, 115 insertions(+), 11 deletions(-)
+
+diff --git a/dlls/winepulse.drv/mmdevdrv.c b/dlls/winepulse.drv/mmdevdrv.c
+index 66e83b5c475..1e060e3553f 100644
+--- a/dlls/winepulse.drv/mmdevdrv.c
++++ b/dlls/winepulse.drv/mmdevdrv.c
+@@ -1149,7 +1149,20 @@ static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient3 *iface,
+     if (!pwfx)
+         return E_POINTER;
+ 
+-    *pwfx = clone_format(&pulse_config.modes[This->dataflow == eCapture].format.Format);
++    if (This->pulse_name[0]) {
++      struct get_device_mix_format_params params;
++      params.render = This->dataflow == eRender;
++      params.pulse_name = This->pulse_name;
++      pulse_call(get_device_mix_format, &params);
++
++      if (FAILED(params.result))
++        return params.result;
++
++      *pwfx = clone_format(&params.fmt.Format);
++    } else {
++      *pwfx = clone_format(&pulse_config.modes[This->dataflow == eCapture].format.Format);
++    }
++
+     if (!*pwfx)
+         return E_OUTOFMEMORY;
+     dump_fmt(*pwfx);
+@@ -1166,6 +1179,23 @@ static HRESULT WINAPI AudioClient_GetDevicePeriod(IAudioClient3 *iface,
+     if (!defperiod && !minperiod)
+         return E_POINTER;
+ 
++    if (This->pulse_name[0]) {
++      struct get_device_period_params params;
++      params.render = This->dataflow == eRender;
++      params.pulse_name = This->pulse_name;
++      pulse_call(get_device_period, &params);
++
++      if (FAILED(params.result))
++        return params.result;
++
++      if (defperiod)
++          *defperiod = params.def_period;
++      if (minperiod)
++          *minperiod = params.min_period;
++
++      return S_OK;
++    }
++
+     if (defperiod)
+         *defperiod = pulse_config.modes[This->dataflow == eCapture].def_period;
+     if (minperiod)
+diff --git a/dlls/winepulse.drv/pulse.c b/dlls/winepulse.drv/pulse.c
+index 60b1c7126dc..335f4b4aa1d 100644
+--- a/dlls/winepulse.drv/pulse.c
++++ b/dlls/winepulse.drv/pulse.c
+@@ -89,6 +89,8 @@ typedef struct _PhysDevice {
+     EndpointFormFactor form;
+     DWORD channel_mask;
+     UINT index;
++    REFERENCE_TIME min_period, def_period;
++    WAVEFORMATEXTENSIBLE fmt;
+     char pulse_name[0];
+ } PhysDevice;
+ 
+@@ -536,6 +538,7 @@ static void pulse_add_device(struct list *list, pa_proplist *proplist, int index
+         free(dev);
+         return;
+     }
++
+     dev->form = form;
+     dev->index = index;
+     dev->channel_mask = channel_mask;
+@@ -656,7 +659,7 @@ static void convert_channel_map(const pa_channel_map *pa_map, WAVEFORMATEXTENSIB
+     fmt->dwChannelMask = pa_mask;
+ }
+ 
+-static void pulse_probe_settings(int render, WAVEFORMATEXTENSIBLE *fmt) {
++static void pulse_probe_settings(int render, WAVEFORMATEXTENSIBLE *fmt, REFERENCE_TIME *def_period, REFERENCE_TIME *min_period, CHAR *pulse_name) {
+     WAVEFORMATEX *wfx = &fmt->Format;
+     pa_stream *stream;
+     pa_channel_map map;
+@@ -681,10 +684,11 @@ static void pulse_probe_settings(int render, WAVEFORMATEXTENSIBLE *fmt) {
+     if (!stream)
+         ret = -1;
+     else if (render)
+-        ret = pa_stream_connect_playback(stream, NULL, &attr,
++        ret = pa_stream_connect_playback(stream, pulse_name, &attr,
+         PA_STREAM_START_CORKED|PA_STREAM_FIX_RATE|PA_STREAM_FIX_CHANNELS|PA_STREAM_EARLY_REQUESTS|PA_STREAM_VARIABLE_RATE, NULL, NULL);
+     else
+-        ret = pa_stream_connect_record(stream, NULL, &attr, PA_STREAM_START_CORKED|PA_STREAM_FIX_RATE|PA_STREAM_FIX_CHANNELS|PA_STREAM_EARLY_REQUESTS);
++        ret = pa_stream_connect_record(stream, pulse_name, &attr, PA_STREAM_START_CORKED|PA_STREAM_FIX_RATE|PA_STREAM_FIX_CHANNELS|PA_STREAM_EARLY_REQUESTS);
++
+     if (ret >= 0) {
+         while (pa_mainloop_iterate(pulse_ml, 1, &ret) >= 0 &&
+                 pa_stream_get_state(stream) == PA_STREAM_CREATING)
+@@ -707,13 +711,13 @@ static void pulse_probe_settings(int render, WAVEFORMATEXTENSIBLE *fmt) {
+         pa_stream_unref(stream);
+ 
+     if (length)
+-        pulse_def_period[!render] = pulse_min_period[!render] = pa_bytes_to_usec(10 * length, &ss);
++        *def_period = *min_period = pa_bytes_to_usec(10 * length, &ss);
+ 
+-    if (pulse_min_period[!render] < MinimumPeriod)
+-        pulse_min_period[!render] = MinimumPeriod;
++    if (*min_period < MinimumPeriod)
++        *min_period = MinimumPeriod;
+ 
+-    if (pulse_def_period[!render] < DefaultPeriod)
+-        pulse_def_period[!render] = DefaultPeriod;
++    if (*def_period < DefaultPeriod)
++        *def_period = DefaultPeriod;
+ 
+     wfx->wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+     wfx->cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+@@ -734,6 +738,46 @@ static void pulse_probe_settings(int render, WAVEFORMATEXTENSIBLE *fmt) {
+         fmt->SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+ }
+ 
++static NTSTATUS pulse_get_device_mix_format(void *args)
++{
++    struct get_device_mix_format_params *params = args;
++    struct list *list = params->render ? &g_phys_speakers : &g_phys_sources;
++    PhysDevice *dev;
++
++    LIST_FOR_EACH_ENTRY(dev, list, PhysDevice, entry) {
++        if (strcmp(params->pulse_name, dev->pulse_name))
++            continue;
++
++        params->fmt = dev->fmt;
++        params->result = S_OK;
++
++        return STATUS_SUCCESS;
++    }
++
++    params->result = E_FAIL;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS pulse_get_device_period(void *args) {
++    struct get_device_period_params *params = args;
++    struct list *list = params->render ? &g_phys_speakers : &g_phys_sources;
++    PhysDevice *dev;
++
++    LIST_FOR_EACH_ENTRY(dev, list, PhysDevice, entry) {
++        if (strcmp(params->pulse_name, dev->pulse_name))
++            continue;
++
++        params->def_period = dev->def_period;
++        params->min_period = dev->min_period;
++        params->result = S_OK;
++
++        return STATUS_SUCCESS;
++    }
++
++    params->result = E_FAIL;
++    return STATUS_SUCCESS;
++}
++
+ /* some poorly-behaved applications call audio functions during DllMain, so we
+  * have to do as much as possible without creating a new thread. this function
+  * sets up a synchronous connection to verify the server is running and query
+@@ -742,6 +786,7 @@ static NTSTATUS pulse_test_connect(void *args)
+ {
+     struct test_connect_params *params = args;
+     struct pulse_config *config = params->config;
++    PhysDevice *dev;
+     pa_operation *o;
+     int ret;
+ 
+@@ -784,8 +829,8 @@ static NTSTATUS pulse_test_connect(void *args)
+         pa_context_get_server(pulse_ctx),
+         pa_context_get_server_protocol_version(pulse_ctx));
+ 
+-    pulse_probe_settings(1, &pulse_fmt[0]);
+-    pulse_probe_settings(0, &pulse_fmt[1]);
++    pulse_probe_settings(1, &pulse_fmt[0], &pulse_def_period[0], &pulse_min_period[0], NULL);
++    pulse_probe_settings(0, &pulse_fmt[1], &pulse_def_period[1], &pulse_min_period[1], NULL);
+ 
+     free_phys_device_lists();
+     list_init(&g_phys_speakers);
+@@ -810,6 +855,14 @@ static NTSTATUS pulse_test_connect(void *args)
+         pa_operation_unref(o);
+     }
+ 
++    LIST_FOR_EACH_ENTRY(dev, &g_phys_speakers, PhysDevice, entry) {
++      pulse_probe_settings(1, &dev->fmt, &dev->def_period, &dev->min_period, dev->pulse_name);
++    }
++
++    LIST_FOR_EACH_ENTRY(dev, &g_phys_sources, PhysDevice, entry) {
++      pulse_probe_settings(0, &dev->fmt, &dev->def_period, &dev->min_period, dev->pulse_name);
++    }
++
+     pa_context_unref(pulse_ctx);
+     pulse_ctx = NULL;
+     pa_mainloop_free(pulse_ml);
+@@ -2333,4 +2386,6 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
+     pulse_test_connect,
+     pulse_is_started,
+     pulse_get_prop_value,
++    pulse_get_device_mix_format,
++    pulse_get_device_period,
+ };
+diff --git a/dlls/winepulse.drv/unixlib.h b/dlls/winepulse.drv/unixlib.h
+index 4f6d856ac79..c250be3bb99 100644
+--- a/dlls/winepulse.drv/unixlib.h
++++ b/dlls/winepulse.drv/unixlib.h
+@@ -159,6 +159,23 @@ struct get_current_padding_params
+     UINT32 *padding;
+ };
+ 
++struct get_device_mix_format_params
++{
++    const char *pulse_name;
++    HRESULT result;
++    BOOL render;
++    WAVEFORMATEXTENSIBLE fmt;
++};
++
++struct get_device_period_params
++{
++    const char *pulse_name;
++    HRESULT result;
++    BOOL render;
++    REFERENCE_TIME def_period;
++    REFERENCE_TIME min_period;
++};
++
+ struct get_next_packet_size_params
+ {
+     struct pulse_stream *stream;
+@@ -260,4 +277,6 @@ enum unix_funcs
+     test_connect,
+     is_started,
+     get_prop_value,
++    get_device_mix_format,
++    get_device_period,
+ };
+-- 
+2.35.1

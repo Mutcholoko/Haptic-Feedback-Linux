@@ -1,0 +1,33 @@
+From d8b7a8d587b5375ac014746f59409fe96d0f0eff Mon Sep 17 00:00:00 2001
+From: Claire <claire.github-309c@sitedethib.com>
+Date: Sat, 18 Jun 2022 12:39:35 +0200
+Subject: [PATCH 1/3] Override device name for DualSense audio devices as games
+ match the audio output by name
+
+It's needed for games like FF7R and FF14
+---
+ dlls/winepulse.drv/pulse.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/dlls/winepulse.drv/pulse.c b/dlls/winepulse.drv/pulse.c
+index 60b1c7126dc..a4048fbf267 100644
+--- a/dlls/winepulse.drv/pulse.c
++++ b/dlls/winepulse.drv/pulse.c
+@@ -521,6 +521,15 @@ static void fill_device_info(PhysDevice *dev, pa_proplist *p)
+ 
+     if ((buffer = pa_proplist_gets(p, PA_PROP_DEVICE_PRODUCT_ID)))
+         dev->product_id = strtol(buffer, NULL, 16);
++
++    /* Some games with DualSense support need the audio device to be called "Wireless Controller" */
++    if (dev->vendor_id == 0x054c && dev->product_id == 0x0ce6) {
++        WCHAR *new_name = get_device_name("Wireless Controller", NULL);
++        if (new_name) {
++          free(dev->name);
++          dev->name = new_name;
++        }
++    }
+ }
+ 
+ static void pulse_add_device(struct list *list, pa_proplist *proplist, int index, EndpointFormFactor form,
+-- 
+2.35.1
