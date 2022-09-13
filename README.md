@@ -24,3 +24,4 @@ Now, take a seat and relax. It will take a few minutes. Some dependencies will p
 After compiling, the makefile will already put Proton on the right place, so all you need to do is to restart Steam and then (remember to change the compatibility tool to be the one you just compiled) open up any game with Haptic Feedback.
 
 Honestly, I am so happy with this. Being able to play games with Haptic Feedback on Linux is something I've been wanting for a long time now. Glad to finally get it to work. Again, all thanks to @ClearlyClaire for making these patches!
+Also, this enables the cool DualSense Haptic Feedback effects on the Steam Deck, which is super cool!
