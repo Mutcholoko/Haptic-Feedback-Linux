@@ -23,5 +23,16 @@ Then,
 Now, take a seat and relax. It will take a few minutes. Some dependencies will probably be missing, so just download them with dnf or apt or whatever your distro uses. Also, if you use Fedora like me, you'll need to disable SELinux to compile this, as it relies on Docker.
 After compiling, the makefile will already put Proton on the right place, so all you need to do is to restart Steam and then (remember to change the compatibility tool to be the one you just compiled) open up any game with Haptic Feedback.
 
+If it doesn't work (with either one of the methods), you'll need to create a udev rule to specify that the controller should be called "Wireless Controller" each time you connect it to your PC. To do so, open the terminal and run these commands (again, thanks ClearlyClaire for investigating all of this):
+- ``` sudo nano /etc/udev/rules.d/80-dualsense.rules ```
+
+Now you'll need to paste this onto the terminal (use CTRL+SHIFT+V): ``` SUBSYSTEM=="sound", ACTION=="change", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="0ce6", ENV{SOUND_DESCRIPTION}="Wireless Controller" ```
+Then press CTRL+O and then ENTER to save the file, and finally press CTRL+X to exit nano.
+
+Now just reload the udev rules by running this command on the terminal:
+- ``` udevadm control --reload-rules ```
+
+It should probably work after doing this.
+
 Honestly, I am so happy with this. Being able to play games with Haptic Feedback on Linux is something I've been wanting for a long time now. Glad to finally get it to work. Again, all thanks to @ClearlyClaire for making these patches!
 Also, this enables the cool DualSense Haptic Feedback effects on the Steam Deck, which is super cool!
