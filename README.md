@@ -35,4 +35,4 @@ Now just reload the udev rules by running this command on the terminal:
 It should probably work after doing this.
 
 Honestly, I am so happy with this. Being able to play games with Haptic Feedback on Linux is something I've been wanting for a long time now. Glad to finally get it to work. Again, all thanks to @ClearlyClaire for making these patches!
-Also, this enables the cool DualSense Haptic Feedback effects on the Steam Deck, which is super cool!
+Also, this enables the cool DualSense Haptic Feedback effects on the Steam Deck, which is super cool! I hope Valve merges this into Proton soon.
