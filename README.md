@@ -14,9 +14,9 @@ Then,
 - ``` git clone --recursive https://github.com/ValveSoftware/Proton.git ``` (this may take a while)
 - ``` cd Proton ```
 - ``` cd wine ```
-- ```git apply /home/Haptic-Feedback-Linux/patch1.patch ```
-- ```git apply /home/Haptic-Feedback-Linux/patch2.patch ```
-- ```git apply /home/Haptic-Feedback-Linux/patch3.patch ```
+- ```git apply /home/YOUR-USERNAME/Haptic-Feedback-Linux/patch1.patch ```
+- ```git apply /home/YOUR-USERNAME/Haptic-Feedback-Linux/patch2.patch ```
+- ```git apply /home/YOUR-USERNAME/Haptic-Feedback-Linux/patch3.patch ```
 - ```cd .. ```
 - ``` make install ```
 
